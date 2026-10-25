@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Search" };
 export default function SearchPage(props: PageProps<"/search">) {
   return (
     <>
-      <PageHeader title="Search" />
+      <PageHeader eyebrow="Search" title="Search results" description="Projects (names and aliases), unit numbers in current snapshots, recorded announcements and brochure page text." />
       <Suspense fallback={<Skeleton />}>
         <Results searchParams={props.searchParams} />
       </Suspense>

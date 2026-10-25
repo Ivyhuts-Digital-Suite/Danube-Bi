@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Compare snapshots" };
 export default function ComparePage(props: PageProps<"/inventory/compare">) {
   return (
     <>
-      <PageHeader title="Compare inventory snapshots" description="Units are matched by project and normalized unit number. Only documents with a printed snapshot date can be compared." />
+      <PageHeader breadcrumbs={[{ label: "Inventory Explorer", href: "/inventory" }, { label: "Compare snapshots" }]} eyebrow="Portfolio" title="Compare inventory snapshots" description="Units are matched by project and normalized unit number. Only documents with a printed snapshot date can be compared." />
       <Suspense fallback={<Skeleton />}>
         <Comparison searchParams={props.searchParams} />
       </Suspense>

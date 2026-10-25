@@ -1,11 +1,22 @@
+import { SearchX } from "lucide-react";
 import Link from "next/link";
+import { EmptyState, PageHeader } from "@/components/ui";
 
 export default function NotFound() {
   return (
-    <div className="rounded-lg border border-line bg-surface p-6 text-sm">
-      <p className="font-semibold">Not found</p>
-      <p className="mt-1 text-ink-2">The record does not exist or was merged into another project.</p>
-      <Link href="/" className="mt-3 inline-block text-accent underline">Back to the Command Center</Link>
-    </div>
+    <>
+      <PageHeader title="Not found" />
+      <EmptyState
+        icon={SearchX}
+        title="This record does not exist"
+        action={
+          <Link href="/" className="text-sm text-link hover:underline">
+            Back to the Command Center
+          </Link>
+        }
+      >
+        It may have been merged into another project (its name is then kept as an alias there — try the search box).
+      </EmptyState>
+    </>
   );
 }

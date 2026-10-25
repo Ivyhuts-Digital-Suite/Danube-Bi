@@ -1,4 +1,48 @@
-# Project status — 2026-10-25
+# Project status — 2026-10-25 (UI/UX redesign)
+
+## Redesign summary
+
+The whole interface was rebuilt as a dark navy analyst workspace (with a light theme), on the
+existing Next.js/MongoDB stack. Ingestion, provenance, validation and security behaviour were not
+changed; the only schema change is additive (`Project.geo` and `Project.geoHistory`).
+
+- New shared design system: tokens in `globals.css`, `components/ui.tsx` (panels, KPI cards with
+  definitions, badges, notices, empty/unavailable states, pagination), `components/viz.tsx`
+  (server-rendered ranked bars, stacked bars, interquartile ranges, meters), `components/charts.tsx`
+  (Recharts histogram, scatter, time bars following the theme), grouped sidebar, typeahead search
+  (`/api/search`), theme toggle. Chart palette validated with the dataviz checker on both themes.
+- Centralised, unit-tested analytics (`lib/inventory-analytics.ts`) with an explicit one-snapshot
+  analysis scope (`server/queries/analytics.ts`), deduplication (identical duplicates collapsed,
+  conflicting units excluded and counted), validity rules and deterministic insights.
+- Pages rebuilt: Command Center, Projects (+ detail), Inventory Explorer (synchronised charts and
+  table, quick filters, column picker, detail drawer, CSV export), Pricing Intelligence, new
+  Geographic Intelligence (Leaflet/OSM + manual location-verification workflow with history),
+  Market Intelligence, Public Announcements, Sources & Imports (DLD CSV preview), Data Quality
+  (review queues), new Ingestion History, Methodology & Definitions, new System Health.
+
+## Live data (Atlas `danube`, queried 2026-10-25)
+
+1,061 accepted Merge2 unit records (1,027 distinct unit numbers) and 226 rejected/unplaced lines
+(93 no unit number and no price, 12 no unit number, 121 unplaced); snapshot date not printed.
+Status labels: 997 available, 0 sold, 0 reserved, 44 unrecognized, 20 none. Listed inventory value
+AED 3.44B over 997 distinct priced units; median listed price AED 3.4M; median 2,473 AED/sq ft.
+16 project records with inventory (26 in total). 64 records need review. No coordinates, DLD
+transactions or announcements exist in the database.
+
+## Verification (redesign)
+
+| Check | Result |
+|---|---|
+| `npm run typecheck`, `npm run lint` | pass, 0 warnings |
+| `npm test` — 9 files, 120 tests (21 new: analytics, dedup, quartiles, bands, outliers, insights, coordinates, CSV, scope/filters against MongoDB) | 120 passed |
+| `npm run build` | pass, 23 routes (first attempt hit a Google Fonts network timeout; re-run passed) |
+| Production server, headless Chrome via CDP: 20 routes at 1440 px dark, 4 at 390 px, 2 in light theme | all rendered, no console errors, no horizontal overflow; 404 returns 404 |
+| CSV export with `flag=missing_price` | 64 rows, matches the Command Center and Data Quality counts |
+
+Not exercised end-to-end: saving a map position through the UI (it would write to the real
+database); the validation it relies on is unit-tested.
+
+# Earlier status — 2026-10-25 (initial build)
 
 ## Starting point
 

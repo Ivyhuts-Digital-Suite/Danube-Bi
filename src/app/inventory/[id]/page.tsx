@@ -39,11 +39,13 @@ async function UnitDetail({ params }: { params: PageProps<"/inventory/[id]">["pa
   return (
     <div className="space-y-6">
       <PageHeader
+        breadcrumbs={[{ label: "Inventory Explorer", href: "/inventory" }, ...(obs.projectId ? [{ label: obs.projectId.name, href: `/projects/${obs.projectId._id}` }] : []), { label: obs.unitNumber ?? "Unit" }]}
+        eyebrow="Unit record"
         title={`Unit ${obs.unitNumber}`}
         description={
           <>
             {obs.projectId ? <Link className="text-accent underline" href={`/projects/${obs.projectId._id}`}>{obs.projectId.name}</Link> : "No project recorded"} · Source:{" "}
-            {obs.sourceDocumentId?.filename} page {obs.sourcePage} · Snapshot {snapshot?.snapshotDateStatus === "from_document" ? `dated ${fmtDate(snapshot.snapshotDate)}` : "date unknown"}
+            {obs.sourceDocumentId?.filename} page {obs.sourcePage} · Snapshot {snapshot?.snapshotDateStatus === "from_document" ? `dated ${fmtDate(snapshot.snapshotDate)}` : "Unknown date"}
           </>
         }
       />

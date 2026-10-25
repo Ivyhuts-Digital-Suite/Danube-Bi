@@ -99,6 +99,8 @@ export const DataSource = model("DataSource", DataSourceSchema);
 // Projects and project facts
 // ---------------------------------------------------------------------------
 
+export const GEO_PRECISIONS = ["verified", "approximate"] as const;
+
 const ProjectSchema = new Schema(
   {
     name: { type: String, required: true },
@@ -115,6 +117,42 @@ const ProjectSchema = new Schema(
     positioning: String,
     amenities: { type: [String], default: [] },
     sourceReferences: { type: [SourceReferenceSchema], default: [] },
+    /**
+     * Map position recorded by a person with its source. Never geocoded automatically.
+     * "verified" = position checked against an authoritative source (e.g. DLD/official map pin);
+     * "approximate" = community or district level only.
+     */
+    geo: {
+      type: new Schema(
+        {
+          lat: { type: Number, required: true },
+          lng: { type: Number, required: true },
+          precision: { type: String, enum: GEO_PRECISIONS, required: true },
+          source: { type: String, required: true },
+          sourceUrl: String,
+          note: String,
+          recordedAt: { type: Date, required: true },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    /** Every location decision (set, changed, cleared) with its evidence; never rewritten. */
+    geoHistory: {
+      type: [
+        {
+          action: { type: String, enum: ["set", "cleared"], required: true },
+          lat: Number,
+          lng: Number,
+          precision: { type: String, enum: GEO_PRECISIONS },
+          source: String,
+          sourceUrl: String,
+          note: String,
+          at: { type: Date, required: true },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true },
 );

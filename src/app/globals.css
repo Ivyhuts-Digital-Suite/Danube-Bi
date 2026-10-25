@@ -1,69 +1,119 @@
 @import "tailwindcss";
 
-/* Design tokens. Chart series and status colours come from the validated reference palette
-   (blue slot 1 passes lightness, chroma and >=3:1 contrast on both surfaces). */
-:root {
-  color-scheme: light;
-  --bg: #f6f6f4;
-  --surface: #fcfcfb;
-  --surface-2: #f0efec;
-  --border: #e2e1dc;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #74736e;
-  --accent: #1c5cab;
-  --accent-soft: #e3eefc;
-  --series-1: #2a78d6;
-  --grid: #e7e6e1;
-  --good: #0ca30c;
-  --warn: #b97800;
-  --crit: #d03b3b;
-  --warn-soft: #fff4dc;
-  --crit-soft: #fde8e8;
-  --good-soft: #e5f6e5;
+/*
+  Design tokens. Dark (navy/charcoal) is the default theme; light is selected with
+  <html data-theme="light">. Chart series slots were validated with the dataviz palette checker
+  against each theme's panel surface (dark #111a2b: all checks pass; light #fbfaf7: passes, with
+  aqua/yellow below 3:1 — every chart therefore has visible values or a data table).
+*/
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a1120;
+  --surface: #0f1829;
+  --surface-2: #142036;
+  --surface-3: #1a2843;
+  --border: #1f2c45;
+  --border-strong: #2c3c5c;
+  --ink: #e8edf6;
+  --ink-2: #b2bdd1;
+  --muted: #8592ab;
+  --brand: #d2b07a;
+  --brand-soft: color-mix(in oklab, #d2b07a 14%, transparent);
+  --link: #86b6ef;
+  --focus: #86b6ef;
+  --accent: #86b6ef;
+  --accent-soft: color-mix(in oklab, #3987e5 18%, transparent);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #9085e9;
+  --series-muted: #4b5a77;
+  --track: #18243b;
+  --grid: #1c2840;
+  --good: #34c46a;
+  --warn: #f2b33d;
+  --crit: #ef6b6b;
+  --good-soft: color-mix(in oklab, #34c46a 14%, transparent);
+  --warn-soft: color-mix(in oklab, #f2b33d 13%, transparent);
+  --crit-soft: color-mix(in oklab, #ef6b6b 14%, transparent);
+  --shadow: 0 1px 0 rgb(255 255 255 / 0.02) inset, 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --overlay: rgb(3 7 15 / 0.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    color-scheme: dark;
-    --bg: #121211;
-    --surface: #1a1a19;
-    --surface-2: #232321;
-    --border: #383835;
-    --ink: #f0efec;
-    --ink-2: #c3c2b7;
-    --muted: #9a998f;
-    --accent: #86b6ef;
-    --accent-soft: #1d2c40;
-    --series-1: #3987e5;
-    --grid: #2c2c2a;
-    --good: #2fbf2f;
-    --warn: #fab219;
-    --crit: #e66767;
-    --warn-soft: #3a2f12;
-    --crit-soft: #3b1d1d;
-    --good-soft: #17301a;
-  }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f1ec;
+  --surface: #fbfaf7;
+  --surface-2: #f2efe8;
+  --surface-3: #e9e5db;
+  --border: #e2ddd2;
+  --border-strong: #cdc6b6;
+  --ink: #111827;
+  --ink-2: #434b5b;
+  --muted: #687082;
+  --brand: #87652a;
+  --brand-soft: color-mix(in oklab, #87652a 12%, transparent);
+  --link: #1c5cab;
+  --focus: #1c5cab;
+  --accent: #1c5cab;
+  --accent-soft: color-mix(in oklab, #2a78d6 12%, transparent);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #6250d6;
+  --series-muted: #b9b3a6;
+  --track: #ece8df;
+  --grid: #e7e3da;
+  --good: #0b7d2c;
+  --warn: #8f5d00;
+  --crit: #c23434;
+  --good-soft: color-mix(in oklab, #0ca30c 11%, transparent);
+  --warn-soft: color-mix(in oklab, #eda100 16%, transparent);
+  --crit-soft: color-mix(in oklab, #d03b3b 11%, transparent);
+  --shadow: 0 1px 2px rgb(17 24 39 / 0.04), 0 8px 24px -16px rgb(17 24 39 / 0.18);
+  --overlay: rgb(17 24 39 / 0.35);
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-link: var(--link);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-muted: var(--series-muted);
+  --color-track: var(--track);
   --color-good: var(--good);
   --color-warn: var(--warn);
   --color-crit: var(--crit);
+  --color-good-soft: var(--good-soft);
   --color-warn-soft: var(--warn-soft);
   --color-crit-soft: var(--crit-soft);
-  --color-good-soft: var(--good-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-serif);
+  --shadow-panel: var(--shadow);
+  --radius-panel: 10px;
+}
+
+html {
+  background: var(--bg);
 }
 
 body {
@@ -71,26 +121,85 @@ body {
   color: var(--ink);
 }
 
-/* Recharts: series colour, recessive grid/axes, text in ink tokens. */
-.viz .recharts-bar-rectangle path,
-.viz .recharts-rectangle.series-1 {
-  fill: var(--series-1);
+::selection {
+  background: color-mix(in oklab, var(--series-1) 35%, transparent);
 }
-.viz .recharts-bar-rectangle:hover path {
-  fill: color-mix(in oklab, var(--series-1) 80%, white);
-}
-.viz .recharts-cartesian-grid line {
-  stroke: var(--grid);
-}
-.viz .recharts-cartesian-axis-tick-value {
-  fill: var(--ink-2);
-  font-size: 12px;
-}
-.viz .recharts-cartesian-axis-line,
-.viz .recharts-cartesian-axis-tick-line {
-  stroke: var(--border);
+
+/* Visible keyboard focus everywhere; mouse clicks stay quiet. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Thin, quiet scrollbars inside panels and tables. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Recharts: recessive grid/axes in ink tokens; marks colored by props. */
+.viz .recharts-cartesian-grid line {
+  stroke: var(--grid);
+}
+.viz .recharts-cartesian-axis-tick-value,
+.viz .recharts-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.viz .recharts-cartesian-axis-line,
+.viz .recharts-cartesian-axis-tick-line {
+  stroke: var(--border-strong);
+}
+.viz .recharts-surface:focus,
+.viz .recharts-wrapper:focus,
+.viz svg:focus {
+  outline: none;
+}
+
+/* Leaflet sits inside a themed panel; keep its controls and popups on our tokens. */
+.leaflet-container {
+  background: var(--surface-2);
+  font: inherit;
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+}
+.leaflet-popup-content {
+  margin: 12px 14px;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted);
+}
+.leaflet-control-attribution {
+  background: color-mix(in oklab, var(--surface) 85%, transparent) !important;
+  color: var(--muted) !important;
+}
+.leaflet-control-attribution a {
+  color: var(--link) !important;
+}
+.leaflet-bar a {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border-color: var(--border) !important;
+}
+:root:not([data-theme="light"]) .map-tiles {
+  filter: brightness(0.72) invert(1) contrast(0.9) hue-rotate(200deg) saturate(0.35) brightness(0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

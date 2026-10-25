@@ -1,5 +1,6 @@
 import type { PipelineStage, Types } from "mongoose";
 import { z } from "zod";
+import { REVIEW_WARNING_CODES } from "@/lib/inventory-analytics";
 import { escapeRegex } from "@/lib/normalize";
 import { summarize, type Summary } from "@/lib/stats";
 import { InventorySnapshot, InventoryUnitObservation, Project } from "@/server/models";
@@ -10,13 +11,17 @@ export const SORTABLE = ["unitNumber", "projectNameAsListed", "typology", "unitT
 export const unitQuerySchema = z.object({
   snapshot: z.string().max(40).optional(),
   project: z.string().max(40).optional(),
-  status: z.enum(["available", "sold", "reserved", "other"]).optional(),
+  status: z.enum(["available", "sold", "reserved", "other", "missing"]).optional(),
   typology: z.string().max(100).optional(),
   unitType: z.string().max(100).optional(),
   q: z.string().trim().max(100).optional(),
   minPrice: z.coerce.number().nonnegative().optional(),
   maxPrice: z.coerce.number().nonnegative().optional(),
   warnings: z.enum(["any", "with", "without"]).default("any"),
+  /** Quick filters: rows missing a usable price/size, or rows carrying a review-required warning. */
+  flag: z.enum(["missing_price", "missing_area", "review"]).optional(),
+  /** One specific validation warning code (e.g. "status_unrecognized"). */
+  warn: z.string().regex(/^[a-z0-9_]{3,60}$/).optional(),
   sort: z.enum(SORTABLE).default("sourcePage"),
   dir: z.enum(["asc", "desc"]).default("asc"),
   page: z.coerce.number().int().min(1).max(100_000).default(1),
@@ -45,15 +50,26 @@ export async function resolveSnapshotIds(snapshot?: string): Promise<Types.Objec
   return snaps.map((s) => s._id);
 }
 
-function unitMatch(q: UnitQuery, snapshotIds: Types.ObjectId[]) {
+export type UnitFilter = Omit<UnitQuery, "sort" | "dir" | "page" | "pageSize">;
+
+export function unitMatch(q: UnitFilter, snapshotIds: Types.ObjectId[]) {
   const match: Record<string, unknown> = { snapshotId: { $in: snapshotIds } };
   const projectId = toObjectId(q.project);
   if (q.project === "none") match.projectId = null;
   else if (projectId) match.projectId = projectId;
-  if (q.status) match.statusNormalized = q.status;
+  if (q.status) match.statusNormalized = q.status === "missing" ? null : q.status;
   if (q.typology) match.typology = q.typology;
   if (q.unitType) match.unitType = q.unitType;
-  if (q.q) match.unitNumber = { $regex: escapeRegex(q.q), $options: "i" };
+  const and: Array<Record<string, unknown>> = [];
+  if (q.q) {
+    const re = { $regex: escapeRegex(q.q), $options: "i" };
+    and.push({ $or: [{ unitNumber: re }, { projectNameAsListed: re }] });
+  }
+  if (q.flag === "missing_price") and.push({ $or: [{ listedPriceAED: null }, { listedPriceAED: { $lte: 0 } }] });
+  if (q.flag === "missing_area") and.push({ $or: [{ areaSqFt: null }, { areaSqFt: { $lte: 0 } }] });
+  if (q.flag === "review") and.push({ validationWarnings: { $in: REVIEW_WARNING_CODES } });
+  if (q.warn) and.push({ validationWarnings: q.warn });
+  if (and.length) match.$and = and;
   if (q.minPrice != null || q.maxPrice != null) {
     match.listedPriceAED = { ...(q.minPrice != null ? { $gte: q.minPrice } : {}), ...(q.maxPrice != null ? { $lte: q.maxPrice } : {}) };
   }
@@ -71,7 +87,7 @@ export async function listUnits(q: UnitQuery) {
       .sort({ [q.sort]: q.dir === "asc" ? 1 : -1, _id: 1 })
       .skip((q.page - 1) * q.pageSize)
       .limit(q.pageSize)
-      .select("projectId projectNameAsListed unitNumber unitType typology areaSqFt view listedPriceAED pricePerSqFt status statusNormalized sourcePage snapshotId validationWarnings")
+      .select("projectId projectNameAsListed unitNumber unitType typology areaSqFt view listedPriceAED pricePerSqFt status statusNormalized sourcePage lineIndex snapshotId validationWarnings originalValues")
       .lean(),
   ]);
   return { total, rows, pageCount: Math.max(1, Math.ceil(total / q.pageSize)) };

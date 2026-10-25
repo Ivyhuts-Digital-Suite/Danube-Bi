@@ -156,6 +156,32 @@ export async function marketSummary(f: MarketFilter) {
   };
 }
 
+/** Count and value by property type (DLD "Property Type"), within the same filters. */
+export async function propertyTypeBreakdown(f: MarketFilter) {
+  return MarketTransaction.aggregate<{ _id: string | null; count: number; value: number }>([
+    { $match: marketMatch(f) },
+    { $group: { _id: "$propertyType", count: { $sum: 1 }, value: { $sum: "$transactionValueAED" } } },
+    { $sort: { count: -1 } },
+  ]);
+}
+
+/** How many transactions carry a project name, and how many of those are linked to a project here. */
+export async function attributionCoverage(f: MarketFilter) {
+  const [r] = await MarketTransaction.aggregate<{ total: number; named: number; linked: number; developer: number }>([
+    { $match: marketMatch(f) },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        named: { $sum: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ["$projectNameAsReported", ""] } }, 0] }, 1, 0] } },
+        linked: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$projectId", null] }, null] }, 1, 0] } },
+        developer: { $sum: { $cond: [{ $ne: [{ $ifNull: ["$developerName", null] }, null] }, 1, 0] } },
+      },
+    },
+  ]);
+  return r ?? { total: 0, named: 0, linked: 0, developer: 0 };
+}
+
 /** Registered transactions linked (by exact name or reviewed alias) to projects in this app. */
 export async function linkedProjectTransactions(f: MarketFilter) {
   const rows = await MarketTransaction.aggregate<{ _id: string; count: number; value: number; first: Date; last: Date }>([

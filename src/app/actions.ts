@@ -5,6 +5,7 @@ import path from "node:path";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getEnv } from "@/lib/env";
+import { checkUaeCoordinates } from "@/lib/geo";
 import { cleanText, parseDateOnly } from "@/lib/normalize";
 import { DatabaseUnavailableError, requireDb } from "@/server/db";
 import { RunInProgressError } from "@/server/ingest/runs";
@@ -16,7 +17,7 @@ import {
   prepareDatabase,
   resolveListedFile,
 } from "@/server/ingest/service";
-import { CLAIM_TYPES, DataQualityIssue, EVENT_TYPES, Project, PublicEvent } from "@/server/models";
+import { CLAIM_TYPES, DataQualityIssue, EVENT_TYPES, GEO_PRECISIONS, Project, PublicEvent } from "@/server/models";
 import { addProjectAlias, AliasConflictError, mergeProjects } from "@/server/projects";
 import { toObjectId } from "@/server/queries/common";
 
@@ -30,8 +31,10 @@ export interface ActionResult {
 function failure(err: unknown): ActionResult {
   if (err instanceof RunInProgressError || err instanceof AliasConflictError) return { ok: false, message: err.message };
   if (err instanceof DatabaseUnavailableError) return { ok: false, message: err.message };
+  if (err instanceof Error && /^Mongo(ServerSelection|NetworkTimeout|Network)Error$/.test(err.name)) return { ok: false, message: "MongoDB is not reachable right now. Check the connection and try again." };
   if (err instanceof Error && err.message.startsWith("Invalid environment")) return { ok: false, message: err.message };
-  console.error("[action]", err);
+  // A plain string: raw driver errors carry objects the dev server cannot forward to the browser.
+  console.error(`[action] ${err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : String(err)}`);
   return { ok: false, message: "The action failed unexpectedly. See the server log for details." };
 }
 
@@ -212,6 +215,63 @@ export async function mergeProjectAction(_prev: ActionResult | null, form: FormD
     await mergeProjects(source, target, note);
     refreshAll();
     return { ok: true, message: "Projects merged. Open the target project to continue." };
+  } catch (err) {
+    return failure(err);
+  }
+}
+
+const locationSchema = z.object({
+  precision: z.enum(GEO_PRECISIONS),
+  source: z.string().trim().min(5, "Describe where the position comes from (at least 5 characters).").max(300),
+  sourceUrl: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((u) => u === "" || /^https?:\/\//i.test(u), "Source URL must start with http:// or https://")
+    .optional(),
+  note: z.string().trim().max(500).optional(),
+});
+
+/**
+ * Record a project's map position after a person checked it. The previous position stays in
+ * geoHistory; nothing is geocoded automatically.
+ */
+export async function setProjectLocationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const id = toObjectId(String(form.get("projectId") ?? ""));
+  if (!id) return { ok: false, message: "Choose a project." };
+  const coords = checkUaeCoordinates(form.get("lat"), form.get("lng"));
+  if (!coords.ok) return { ok: false, message: coords.reason };
+  const parsed = locationSchema.safeParse({
+    precision: form.get("precision"),
+    source: form.get("source"),
+    sourceUrl: form.get("sourceUrl") ?? "",
+    note: form.get("note") ?? "",
+  });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues.map((i) => i.message).join("; ") };
+  const d = parsed.data;
+  try {
+    await requireDb();
+    const now = new Date();
+    const geo = { lat: coords.lat, lng: coords.lng, precision: d.precision, source: d.source, sourceUrl: d.sourceUrl || undefined, note: d.note || undefined, recordedAt: now };
+    const res = await Project.updateOne({ _id: id }, { $set: { geo }, $push: { geoHistory: { action: "set", lat: geo.lat, lng: geo.lng, precision: geo.precision, source: geo.source, sourceUrl: geo.sourceUrl, note: geo.note, at: now } } });
+    if (!res.matchedCount) return { ok: false, message: "Project not found." };
+    refreshAll();
+    return { ok: true, message: `Position saved as ${d.precision} (${coords.lat}, ${coords.lng}).` };
+  } catch (err) {
+    return failure(err);
+  }
+}
+
+export async function clearProjectLocationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const id = toObjectId(String(form.get("projectId") ?? ""));
+  const reason = cleanText(form.get("reason")).slice(0, 500);
+  if (!id) return { ok: false, message: "Choose a project." };
+  if (reason.length < 5) return { ok: false, message: "Give a reason for removing the position (at least 5 characters)." };
+  try {
+    await requireDb();
+    const res = await Project.updateOne({ _id: id, geo: { $exists: true } }, { $unset: { geo: "" }, $push: { geoHistory: { action: "cleared", note: reason, at: new Date() } } });
+    refreshAll();
+    return res.modifiedCount ? { ok: true, message: "Position removed (kept in the location history)." } : { ok: false, message: "This project has no recorded position." };
   } catch (err) {
     return failure(err);
   }

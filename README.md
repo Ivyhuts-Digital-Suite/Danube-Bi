@@ -53,6 +53,7 @@ mongod --dbpath .mongo-data --port 27017 --bind_ip 127.0.0.1
 
 Check health:
 
+- **System Health** page (`/system`) shows reachability, latency, collection counts and indexes.
 - `GET http://127.0.0.1:3000/api/health` → `{"ok":true,"database":"reachable"}` (HTTP 503 when unreachable)
 - Every page shows a red **Database unavailable** banner when MongoDB cannot be reached; no
   page invents data in that state.
@@ -131,44 +132,99 @@ non-human means", so there is **no scraper**. Record announcements on **Announce
 title, URL, publisher, publication date, a summary in your own words, and a claim classification.
 Events can be retracted (kept for history), not deleted.
 
-## 8. Sources, formulas, provenance and limitations
+## 8. Application guide
 
-Full definitions are on the in-app **Methodology** page and next to every KPI (**Definition**).
-Summary:
+The interface is a dark navy analyst workspace (a light theme is one click away in the header; the
+choice is remembered per browser). The sidebar is grouped into Overview, Portfolio, Market, Data
+management and System. The header search (`Ctrl K` or `/`) suggests projects (names and aliases)
+and unit numbers as you type; Enter opens full results including brochure text and announcements.
+
+| Page | What it answers |
+|---|---|
+| **Command Center** (`/`) | Accepted unit records vs. rejected lines, status labels, listed inventory value, median price and AED/sq ft, projects represented, records needing review; deterministic key findings (each with sample, caveat and a link to its records); an "investigate next" data-quality list; composition, price, size and typology charts; source freshness |
+| **Projects** (`/projects`) | Searchable cards or table, sortable by records, median price, listed value or name; attribution confidence, alias flags, coverage and sources per project |
+| **Project detail** (`/projects/[id]`) | Status and typology mix, price distribution, AED/sq ft by typology, paginated unit table, brochure claims with page excerpts and differing-value warnings, DLD register, announcements, snapshot timeline and import runs, map position with location history, alias/merge review |
+| **Inventory Explorer** (`/inventory`) | Search, grouped filters, quick filters (available, sold, review required, missing price/size) and removable chips; status, price, size and project charts that use the *same* filter as the table; sortable table with configurable columns, warning explanations, source page and snapshot date, and a side panel with the original extracted text; CSV export of the current filter |
+| **Pricing Intelligence** (`/pricing`) | Median/mean price and AED/sq ft, quartiles, coverage; distributions; price vs size scatter; interquartile ranges by project, typology and size band; unit-type table; Tukey outlier review; dated-snapshot comparison only when two or more dated snapshots exist |
+| **Geographic Intelligence** (`/geography`) | Leaflet + OpenStreetMap map synced with a project list, marker area proportional to records, verified vs approximate positions, fit-to-visible, coverage counts, and the projects that still need a position |
+| **Market Intelligence** (`/market`) | DLD registered transactions only (volume and value by month, property types, developer share with attribution coverage, linked projects). Without DLD exports it explains how to import them instead of showing charts |
+| **Public Announcements** (`/timeline`) | Manually recorded public events with claim classification and retraction history |
+| **Sources & Imports** (`/sources`) | PDF import, DLD CSV upload with in-browser preview (detected export type, first rows checked with the importer's own rules), document cards with SHA-256 and outcomes, recent runs, retry guidance, source registry |
+| **Data Quality** (`/quality`) | Review queues: records needing review (by check, linked to the explorer), rejected and unplaced PDF lines with original text, possible aliases (mark reviewed with a note), snapshot dates, DLD matching, extraction failures, and all issues with recorded review decisions |
+| **Ingestion History** (`/sources/runs`) | Every import attempt, filterable by status and source, with run detail pages |
+| **Methodology & Definitions** (`/methodology`) | Counting rules, every metric definition, the validation-check glossary, insight/outlier rules, location rules, evidence classes |
+| **System Health** (`/system`) | Database reachability and latency, collection counts and index status, data folders, running imports, local-only posture |
+
+### Recording project locations
+
+The supplied PDFs contain no coordinates, so the map starts empty — projects are never placed at a
+default point or geocoded silently. On a project page (section **Location**) click the map or type
+decimal coordinates, choose **verified** (building-level, checked in an authoritative source) or
+**approximate** (community-level), and record the source (and URL if any). Coordinates outside the
+UAE, or with latitude and longitude swapped, are rejected. Every set/remove is kept in the
+project's location history. Map tiles are loaded by your browser from `tile.openstreetmap.org`
+(© OpenStreetMap contributors; attribution stays visible); no paid map API is used.
+
+## 9. Formulas, counting rules, provenance and limitations
+
+Full definitions are on the in-app **Methodology & Definitions** page and behind the ⓘ next to
+every KPI. All inventory analytics are computed in one tested module
+(`src/lib/inventory-analytics.ts`) from rows loaded by `src/server/queries/analytics.ts`.
+
+- **Analysis scope = one snapshot.** Every inventory figure describes one inventory document,
+  shown in the scope bar on each page: by default the snapshot with the latest *printed* date, or,
+  if none is dated, the most recently imported one (its import time is never shown as a snapshot
+  date). A unit listed in two documents is therefore never double-counted.
+- **Unit records** = accepted rows; status and composition counts are per record and equal the
+  Inventory Explorer row counts for the same filter.
+- **Analysis set** (prices, sizes, AED/sq ft, listed value) = one record per distinct unit
+  (project + normalized unit number). Identical duplicates count once; units whose duplicate rows
+  disagree are excluded and counted. Exclusions are shown next to the KPIs.
+- A price or size is valid only if it is a finite number greater than 0; AED/sq ft needs both.
+  Nothing is imputed.
 
 | Metric | Formula | Notes |
 |---|---|---|
-| Inventory rows | count of accepted unit rows in current snapshots | includes duplicate unit rows |
-| Distinct units | distinct (snapshot, project, normalized unit number) | duplicates flagged |
-| Units recorded as available | distinct units with status *available* | as of the document's date, **not** current availability |
-| Median listed price | exact median of `listedPriceAED` | a listed price is not a transaction price; sums of listed prices are not revenue |
-| Median listed AED/sq ft | median of `listedPriceAED / areaSqFt` per row | rows need a price and a positive size |
-| Registered transactions / value | count / sum of `Amount`, one per DLD Transaction Number | only the exports you imported; not Danube revenue; mortgages/gifts are not sale prices |
+| Accepted unit records | count of accepted rows in the scope snapshot | not the real-world total inventory, which no source states |
+| Recorded as available / sold | records whose status label reads available / sold | as printed on the document's own date — **not** live availability |
+| Listed inventory value | sum of valid listed prices over the analysis set | asking prices; **not** revenue, sales or transaction value |
+| Median listed price / AED per sq ft | exact median (Excel PERCENTILE.INC interpolation) over the analysis set | listed, not transacted |
+| Records requiring review | records with a review-level validation warning | missing/unreadable price or size, unusual values, missing/unrecognized status, no project |
+| Outliers | AED/sq ft outside Q1 − 1.5·IQR … Q3 + 1.5·IQR (at least 8 units) | values to check, not errors |
+| Registered transactions / value | count / sum of `Amount`, one per DLD Transaction Number | only imported exports; not Danube revenue |
 | Median registered AED/sq ft | median of `Amount / (Property Size m² × 10.7639104)` | rows with size > 0 |
-| Developer share | developer value ÷ **all** value in the same filters | developer via exact match to the DLD project register; unattributed value stays in the denominator; flagged unreliable below 80% coverage |
+| Developer share | developer value ÷ **all** value in the same filters | via the DLD project register; flagged unreliable below 80% attribution coverage |
 
 Provenance: every inventory row stores its document (SHA-256), page, line and original strings;
-every brochure claim stores document, page, extracted text, attribution method and confidence;
-every transaction stores its DLD record and source file; every announcement stores URL, publisher,
-publication date and retrieval time.
+every rejected or unplaced line is stored with its reason and original text; every brochure claim
+stores document, page, extracted text, attribution method and confidence; every transaction
+stores its DLD record and source file; every announcement stores URL, publisher, publication date
+and retrieval time; every location stores its source, precision and history.
 
-Reconciliation: project names merge only on an exact normalized key (case/spaces/punctuation
-ignored). Near-matches are flagged as *possible aliases*; DLD names containing a known project name
-are flagged as *unmatched project candidates*. A person adds an alias or merges projects on the
-project page, with a required evidence note.
+Reconciliation: project names merge only on an exact normalized key. Near-matches are flagged as
+*possible aliases* (Data Quality → Possible aliases); a person merges projects or adds aliases on
+the project page with a required evidence note, or marks the pair reviewed.
 
-Known limitations:
+Known limitations (as of 2026-10-25, with the real Merge1.pdf and Merge2.pdf imported):
 
-- The real `Merge1.pdf` and `Merge2.pdf` have not been seen yet; extraction is verified only on
-  synthetic test PDFs. Review the first real import run carefully.
-- Brochure fact extraction is heuristic (regular expressions) and can miss or mis-read claims.
-- No OCR for scanned pages.
-- Dubai Pulse (historical DLD datasets) was unreachable from this environment (connection refused).
+- **Snapshot date unknown**: Merge2.pdf prints no "as of" date, so statuses and prices cannot be
+  placed in time, and snapshot comparison stays unavailable until a second, dated document exists.
+- **Extraction gaps**: 48 Merge2 pages and 28 Merge1 pages have no text layer (no OCR), so their
+  units and claims are missing; 226 Merge2 lines were rejected or unplaced (kept for review).
+- **Extraction artefacts**: letter-spaced headings were read as project names (e.g. "D A N U B E")
+  and some page text as status labels. They are flagged (possible aliases, unrecognized status)
+  rather than corrected automatically.
+- **No sold labels**: the inventory document records no unit as sold, so sold counts are zero.
+- **No map positions**: no source contains coordinates; positions must be recorded by an analyst.
+- **No DLD data or announcements imported yet**: Market Intelligence shows its import guide.
+- Brochure fact extraction is heuristic and can miss or mis-read claims.
+- Dubai Pulse was unreachable from this environment.
 - Unavailable without authorized internal data: bookings, cancellations, realized revenue,
   profitability, leads/conversion, campaign spend/ROI, sales-team and customer analytics.
-- The AI analyst (phase 8) is not implemented.
+- The production build downloads the Geist and Source Serif 4 fonts from Google Fonts; a build
+  without internet access fails at that step (a transient timeout is fixed by re-running).
 
-## 9. Tests and checks
+## 10. Tests and checks
 
 ```bash
 npm run typecheck          # next typegen + tsc
@@ -182,7 +238,7 @@ Integration tests need MongoDB. They use `MONGODB_TEST_URI` if set, otherwise st
 drop their databases afterwards. If neither is possible they are **skipped with a printed reason**.
 They never touch your real database or `data/` folder. Test fixtures are synthetic.
 
-## 10. Security and privacy
+## 11. Security and privacy
 
 - No authentication: intended for local, single-user use; servers bind to `127.0.0.1`.
 - Mutations are Next.js Server Actions, which reject requests whose `Origin` differs from the host
@@ -194,20 +250,26 @@ They never touch your real database or `data/` folder. Test fixtures are synthet
 - File imports from the UI can only reference files listed inside `data/incoming` (no path
   traversal).
 - Error messages shown in the UI never include the MongoDB URI or stack traces.
-- Source files stay local. Nothing is sent to external services; no AI provider is called.
+- Source files stay local and are never served to the browser. Nothing is sent to external
+  services; no AI provider is called. The only third-party request is the browser loading
+  OpenStreetMap tiles on map views.
+- CSV exports neutralise spreadsheet formulas (cells starting with `=`, `+`, `-`, `@`).
 - `.env*` (except `.env.example`) and everything in `data/` (except its README) are git-ignored.
 
-## 11. Project layout
+## 12. Project layout
 
 ```
-src/app/                 pages (Command Center, projects, inventory, pricing, market,
-                         timeline, sources, quality, methodology, search), server actions,
-                         /api/health
-src/components/          UI primitives, charts, tables, forms
-src/lib/                 pure helpers: env, normalization, statistics, metric/source definitions
+src/app/                 pages (Command Center, projects, inventory, pricing, geography,
+                         market, timeline, sources, runs, quality, methodology, system,
+                         search), server actions, /api/health, /api/search,
+                         /api/export/inventory
+src/components/          design system (ui.tsx), server-rendered charts (viz.tsx), Recharts
+                         charts (charts.tsx), Leaflet map, tables, filters, forms, app shell
+src/lib/                 pure helpers: inventory analytics, statistics, normalization, geo
+                         and CSV helpers, metric/source definitions
 src/server/models.ts     Mongoose schemas and indexes
 src/server/ingest/       PDF and CSV extraction, import runs, document registry
-src/server/queries/      read-side queries used by pages
+src/server/queries/      read-side queries: analysis scope, portfolio, quality queues, market
 src/server/quality.ts    data-quality checks
 scripts/ingest.ts        CLI
 tests/                   unit and integration tests, synthetic fixtures

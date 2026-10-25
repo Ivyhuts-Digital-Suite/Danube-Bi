@@ -1,12 +1,15 @@
+import { ArrowRight, Landmark, SearchX } from "lucide-react";
 import type { Metadata } from "next";
 import Form from "next/form";
 import Link from "next/link";
 import { Suspense } from "react";
-import { ChartFrame } from "@/components/chart-frame";
 import { TimeBarChart } from "@/components/charts";
-import { btn, btnPrimary, Card, DataError, EmptyState, input, Kpi, loadDb, Notice, PageHeader, Skeleton, td, tdNum, th } from "@/components/ui";
+import { FilterChips, type Chip } from "@/components/filters";
+import { Badge, btn, btnPrimary, DataError, EmptyState, input, KpiCard, label, link, loadDb, Notice, PageHeader, Panel, SectionHeading, Skeleton, td, tdNum, th } from "@/components/ui";
+import { BarList, ChartPanel, Meter } from "@/components/viz";
 import { fmtAED, fmtAEDCompact, fmtDate, fmtInt, fmtNum1, fmtPct } from "@/lib/format";
-import { linkedProjectTransactions, marketFacets, marketSummary, parseMarketFilter, SHARE_COVERAGE_THRESHOLD } from "@/server/queries/market";
+import { flatParams } from "@/lib/url";
+import { attributionCoverage, linkedProjectTransactions, marketFacets, marketSummary, parseMarketFilter, propertyTypeBreakdown, SHARE_COVERAGE_THRESHOLD } from "@/server/queries/market";
 
 export const metadata: Metadata = { title: "Market Intelligence" };
 
@@ -14,95 +17,144 @@ export default function MarketPage(props: PageProps<"/market">) {
   return (
     <>
       <PageHeader
+        eyebrow="Market"
         title="Market Intelligence"
-        description="Registered transactions from imported Dubai Land Department exports. Registered values are market activity — not Danube revenue — and are never mixed with listed or brochure prices."
+        description="Registered transactions from Dubai Land Department exports that you imported. These are kept strictly separate from Danube inventory listings and from public announcements; registered value is market activity, not Danube revenue."
       />
-      <Suspense fallback={<Skeleton rows={5} />}>
+      <Suspense fallback={<Skeleton rows={3} />}>
         <Market searchParams={props.searchParams} />
       </Suspense>
     </>
   );
 }
 
+const DLD_URL = "https://dubailand.gov.ae/en/open-data/real-estate-data/";
+
 async function Market({ searchParams }: { searchParams: PageProps<"/market">["searchParams"] }) {
-  const sp = await searchParams;
+  const sp = flatParams(await searchParams);
   const f = parseMarketFilter(sp);
   const r = await loadDb(async () => {
     const facets = await marketFacets();
-    if (!facets.range) return { facets, summary: null, linked: [] };
-    const [summary, linked] = await Promise.all([marketSummary(f), linkedProjectTransactions(f)]);
-    return { facets, summary, linked };
+    if (!facets.range) return { facets, summary: null, linked: [], types: [], coverage: null };
+    const [summary, linked, types, coverage] = await Promise.all([marketSummary(f), linkedProjectTransactions(f), propertyTypeBreakdown(f), attributionCoverage(f)]);
+    return { facets, summary, linked, types, coverage };
   });
   if (!r.ok) return <DataError error={r.error} />;
-  const { facets, summary, linked } = r.data;
+  const { facets, summary, linked, types, coverage } = r.data;
+
   if (!facets.range) {
     return (
-      <EmptyState title="No DLD transaction data has been imported">
-        Download a Transactions export from the{" "}
-        <a className="text-accent underline" href="https://dubailand.gov.ae/en/open-data/real-estate-data/" target="_blank" rel="noopener noreferrer">DLD Real Estate Data page</a> (the form requires a CAPTCHA, so this is a manual step), plus a Projects export for developer attribution, then import them on{" "}
-        <Link className="text-accent underline" href="/sources">Sources &amp; Imports</Link>.
-      </EmptyState>
+      <div className="space-y-5">
+        <div className="grid gap-4 lg:grid-cols-3">
+          <SourceCard title="Danube inventory listings" status="Imported" tone="good" body="Listed (asking) prices and status labels from the supplied inventory PDF. Analysed on Inventory, Pricing and Projects." href="/pricing" />
+          <SourceCard title="DLD registered transactions" status="Not imported" tone="warn" body="Official registrations from the Dubai Land Department. Needed for transaction volume, value and registered price per area." href="/sources#dld" />
+          <SourceCard title="Public announcements" status="Manual entry" tone="neutral" body="Launches, payment plans and handovers recorded by hand with a URL and date. Company statements are claims, not transactions." href="/timeline" />
+        </div>
+        <EmptyState
+          icon={Landmark}
+          title="No DLD transaction data has been imported"
+          action={
+            <Link href="/sources#dld" className={btnPrimary}>
+              Import DLD CSV exports <ArrowRight aria-hidden className="size-4" />
+            </Link>
+          }
+        >
+          <p>
+            Market charts appear only when real DLD exports are present — nothing is estimated from listings. The{" "}
+            <a className={link} href={DLD_URL} target="_blank" rel="noopener noreferrer">
+              DLD Real Estate Data page
+            </a>{" "}
+            protects downloads with a CAPTCHA, so this is a manual step:
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>
+              <strong className="text-ink">Projects</strong> tab → Download as CSV (gives developer names for attribution).
+            </li>
+            <li>
+              <strong className="text-ink">Transactions</strong> tab → choose a date range (e.g. Sales, Residential) → Download as CSV.
+            </li>
+            <li>Upload both on Sources &amp; Imports, or place them in <code>data/incoming/dld/</code>.</li>
+          </ol>
+          <p className="mt-2 text-xs text-muted">DLD site terms permit personal, non-commercial use. Transactions are attributed to Danube only through the DLD project register or a reviewed alias — never by a similar-looking project name.</p>
+        </EmptyState>
+      </div>
     );
   }
-  const str = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
+
   const period = `${f.from ? fmtDate(f.from) : fmtDate(facets.range.min)} – ${f.to ? fmtDate(f.to) : fmtDate(facets.range.max)}`;
   const filterText = [f.transactionType, f.registrationType, f.usage, f.propertyType].filter(Boolean).join(" · ") || "all transaction types";
+  const params = { from: sp.from, to: sp.to, type: sp.type, reg: sp.reg, usage: sp.usage, ptype: sp.ptype };
+  const chips: Chip[] = [];
+  if (sp.from) chips.push({ key: "from", label: `From ${sp.from}` });
+  if (sp.to) chips.push({ key: "to", label: `To ${sp.to}` });
+  if (sp.type) chips.push({ key: "type", label: `Type: ${sp.type}` });
+  if (sp.reg) chips.push({ key: "reg", label: `Registration: ${sp.reg}` });
+  if (sp.usage) chips.push({ key: "usage", label: `Usage: ${sp.usage}` });
+  if (sp.ptype) chips.push({ key: "ptype", label: `Property: ${sp.ptype}` });
 
   return (
     <div className="space-y-6">
-      <Form action="/market" className="grid gap-2 rounded-lg border border-line bg-surface p-3 sm:grid-cols-3 lg:grid-cols-7">
-        <label className="text-xs text-ink-2">
-          From
-          <input type="date" name="from" defaultValue={str(sp.from)} className={`${input} mt-1 w-full`} />
-        </label>
-        <label className="text-xs text-ink-2">
-          To (inclusive)
-          <input type="date" name="to" defaultValue={str(sp.to)} className={`${input} mt-1 w-full`} />
-        </label>
-        {(
-          [
-            ["type", "Transaction type", facets.types],
-            ["reg", "Registration", facets.regs],
-            ["usage", "Usage", facets.usages],
-            ["ptype", "Property type", facets.ptypes],
-          ] as const
-        ).map(([name, label, options]) => (
-          <label key={name} className="text-xs text-ink-2">
-            {label}
-            <select name={name} defaultValue={str(sp[name])} className={`${input} mt-1 w-full`}>
-              <option value="">All</option>
-              {options.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
+      <section aria-label="Filters" className="space-y-3 rounded-panel border border-line bg-surface p-4 shadow-panel">
+        <Form action="/market" className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[repeat(6,minmax(0,1fr))_auto]">
+          <label className={label}>
+            From
+            <input type="date" name="from" defaultValue={sp.from ?? ""} className={`${input} w-full`} />
           </label>
-        ))}
-        <div className="flex items-end gap-2">
-          <button className={btnPrimary} type="submit">Apply</button>
-          <Link className={btn} href="/market">Reset</Link>
-        </div>
-      </Form>
-
-      <p className="text-xs text-muted">
-        Imported coverage: {fmtInt(facets.range.n)} transactions dated {fmtDate(facets.range.min)} – {fmtDate(facets.range.max)}. Results reflect only the exports that were imported, not the whole market.
-      </p>
+          <label className={label}>
+            To (inclusive)
+            <input type="date" name="to" defaultValue={sp.to ?? ""} className={`${input} w-full`} />
+          </label>
+          {(
+            [
+              ["type", "Transaction type", facets.types],
+              ["reg", "Registration", facets.regs],
+              ["usage", "Usage", facets.usages],
+              ["ptype", "Property type", facets.ptypes],
+            ] as const
+          ).map(([name, text, options]) => (
+            <label key={name} className={label}>
+              {text}
+              <select name={name} defaultValue={sp[name] ?? ""} className={`${input} w-full normal-case tracking-normal`}>
+                <option value="">All</option>
+                {options.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <div className="flex items-end gap-2">
+            <button className={btnPrimary} type="submit">
+              Apply
+            </button>
+            <Link className={btn} href="/market">
+              Reset
+            </Link>
+          </div>
+        </Form>
+        <FilterChips path="/market" params={params} chips={chips} />
+        <p className="text-xs text-muted">
+          Imported coverage: {fmtInt(facets.range.n)} transactions dated {fmtDate(facets.range.min)} – {fmtDate(facets.range.max)}. Results reflect only the exports imported, not the whole market.
+        </p>
+      </section>
 
       {!summary ? (
-        <EmptyState title="No transactions match these filters" />
+        <EmptyState icon={SearchX} title="No transactions match these filters" action={<Link className={btn} href="/market">Reset filters</Link>} />
       ) : (
         <>
-          {!f.transactionType ? (
-            <Notice tone="warn">Mixed transaction types (e.g. mortgages and gifts) are included. Filter to Sales before reading price per sq ft or market share.</Notice>
-          ) : null}
+          {!f.transactionType ? <Notice tone="warn">Mixed transaction types (e.g. mortgages and gifts) are included. Filter to Sales before reading price per sq ft or market share.</Notice> : null}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Kpi label="Registered transactions" value={fmtInt(summary.totals.count)} sub={`${period} · ${filterText}`} metric="registered_tx_count" />
-            <Kpi label="Registered transaction value" value={fmtAEDCompact(summary.totals.value)} sub="Market activity, not Danube revenue" metric="registered_tx_value" />
-            <Kpi label="Median registered AED / sq ft" value={fmtNum1(summary.medianPsf)} sub={`n = ${fmtInt(summary.psfSample)} with DLD property size > 0`} metric="registered_psf_median" />
-            <Kpi
+            <KpiCard label="Registered transactions" value={fmtInt(summary.totals.count)} sub={`${period} · ${filterText}`} metric="registered_tx_count" />
+            <KpiCard label="Registered transaction value" value={fmtAEDCompact(summary.totals.value)} sub="Market activity — not Danube revenue" metric="registered_tx_value" />
+            <KpiCard label="Median registered AED / sq ft" value={summary.medianPsf != null ? fmtNum1(summary.medianPsf) : "—"} sub={`n = ${fmtInt(summary.psfSample)} with a DLD property size > 0`} metric="registered_psf_median" />
+            <KpiCard
               label="Danube share of registered value"
               value={summary.danube.developerNames.length ? fmtPct(summary.danube.valueShare) : "—"}
               sub={
                 summary.danube.developerNames.length
                   ? `${fmtInt(summary.danube.count)} transactions · attribution coverage ${fmtPct(summary.coverage)}${summary.shareReliable ? "" : " — below 80%, not reliable"}`
-                  : `No transactions attributed to a Danube developer · coverage ${fmtPct(summary.coverage)}`
+                  : `No transaction attributed to a Danube developer · coverage ${fmtPct(summary.coverage)}`
               }
               metric="developer_share"
               tone={summary.shareReliable ? undefined : "warn"}
@@ -110,35 +162,42 @@ async function Market({ searchParams }: { searchParams: PageProps<"/market">["se
           </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
-            <ChartFrame
-              title="Registered transactions per month"
-              metric="registered_tx_count"
-              period={`${period} · ${filterText}`}
-              source="DLD Transactions export (Transaction Date)"
-              table={{ head: ["Month", "Transactions", "Danube-attributed"], rows: summary.monthly.map((m) => [m._id, m.count, m.danubeCount]) }}
-            >
+            <ChartPanel title="Transactions per month" metric="registered_tx_count" subtitle={`${period} · ${filterText}`} source="DLD Transactions export (Transaction Date)" table={{ head: ["Month", "Transactions", "Danube-attributed"], rows: summary.monthly.map((m) => [m._id, m.count, m.danubeCount]) }}>
               <TimeBarChart data={summary.monthly.map((m) => ({ label: m._id, value: m.count }))} valueLabel="registered transactions" ariaLabel="Registered transactions per month" />
-            </ChartFrame>
-            <ChartFrame
-              title="Registered transaction value per month"
-              metric="registered_tx_value"
-              period={`${period} · ${filterText}`}
-              source="DLD Transactions export (Amount)"
-              table={{ head: ["Month", "Value (AED)", "Danube-attributed value (AED)"], rows: summary.monthly.map((m) => [m._id, Math.round(m.value), Math.round(m.danubeValue)]) }}
-            >
+            </ChartPanel>
+            <ChartPanel title="Registered value per month" metric="registered_tx_value" subtitle={`${period} · ${filterText}`} source="DLD Transactions export (Amount)" table={{ head: ["Month", "Value (AED)", "Danube-attributed (AED)"], rows: summary.monthly.map((m) => [m._id, Math.round(m.value), Math.round(m.danubeValue)]) }}>
               <TimeBarChart data={summary.monthly.map((m) => ({ label: m._id, value: m.value }))} fmt="aed" valueLabel="registered value" ariaLabel="Registered transaction value per month" />
-            </ChartFrame>
+            </ChartPanel>
+            <ChartPanel title="By property type" info="DLD Property Type as exported." subtitle="Transactions in the selection" table={{ head: ["Property type", "Transactions", "Value (AED)"], rows: types.map((t) => [t._id ?? "Not recorded", t.count, Math.round(t.value)]) }}>
+              <BarList ariaLabel="Transactions by property type" items={types.slice(0, 10).map((t) => ({ key: t._id ?? "none", label: t._id ?? "Not recorded", value: t.count, display: `${fmtInt(t.count)} · ${fmtAEDCompact(t.value)}`, muted: !t._id }))} />
+            </ChartPanel>
+            <Panel title="Attribution coverage" subtitle="How much of the selection can be tied to a developer or to a project in this app" bodyClassName="p-4 space-y-3">
+              {coverage ? (
+                <>
+                  <Meter label="Transactions with a DLD project name" value={coverage.named} total={coverage.total} />
+                  <Meter label="Attributed to a developer (DLD register, exact name)" value={coverage.developer} total={coverage.total} tone={coverage.total && coverage.developer / coverage.total < SHARE_COVERAGE_THRESHOLD ? "warn" : undefined} />
+                  <Meter label="Linked to a project here (exact name or reviewed alias)" value={coverage.linked} total={coverage.total} />
+                  <p className="text-xs text-muted">
+                    Unmatched names are listed on{" "}
+                    <Link className={link} href="/quality?queue=dld">
+                      Data Quality
+                    </Link>
+                    . A similar project name is never enough to attribute a transaction.
+                  </p>
+                </>
+              ) : null}
+            </Panel>
           </div>
 
-          <Card
-            title="Developer share of registered value"
-            subtitle={`Developer attributed through the DLD project register by exact project name. Coverage ${fmtPct(summary.coverage)} of value; threshold for a reliable share ${fmtPct(SHARE_COVERAGE_THRESHOLD, 0)}.`}
-          >
+          <SectionHeading>Developers and projects</SectionHeading>
+          <Panel title="Developer share of registered value" subtitle={`Coverage ${fmtPct(summary.coverage)} of value; a share is reliable only at ≥ ${fmtPct(SHARE_COVERAGE_THRESHOLD, 0)}`} bodyClassName="p-0">
             {!summary.shareReliable ? (
-              <Notice tone="warn">Less than 80% of value is attributed to a developer. Shares below are lower bounds and should not be read as market share.</Notice>
+              <div className="p-4 pb-0">
+                <Notice tone="warn">Less than 80% of value is attributed to a developer. Shares below are lower bounds, not market share.</Notice>
+              </div>
             ) : null}
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-sm">
+            <div className="scroll-thin mt-2 overflow-x-auto">
+              <table className="w-full text-[13px]">
                 <thead>
                   <tr>
                     <th className={th}>Developer (DLD name)</th>
@@ -150,8 +209,10 @@ async function Market({ searchParams }: { searchParams: PageProps<"/market">["se
                 </thead>
                 <tbody>
                   {summary.developerShares.slice(0, 20).map((d) => (
-                    <tr key={d.developerName} className={d.isDanube ? "bg-accent-soft" : ""}>
-                      <td className={td}>{d.developerName}{d.isDanube ? " (matched as Danube)" : ""}</td>
+                    <tr key={d.developerName} className={d.isDanube ? "bg-brand-soft" : ""}>
+                      <td className={td}>
+                        {d.developerName} {d.isDanube ? <Badge tone="brand">matched as Danube</Badge> : null}
+                      </td>
                       <td className={tdNum}>{fmtInt(d.count)}</td>
                       <td className={tdNum}>{fmtAEDCompact(d.value)}</td>
                       <td className={tdNum}>{fmtPct(d.valueShare)}</td>
@@ -168,43 +229,53 @@ async function Market({ searchParams }: { searchParams: PageProps<"/market">["se
                 </tbody>
               </table>
             </div>
-            <p className="mt-2 text-xs text-muted">
-              &quot;Danube&quot; = DLD developer names containing &quot;danube&quot;{summary.danube.developerNames.length ? `: ${summary.danube.developerNames.join("; ")}` : " (none found in this selection)"}. Verify these names before relying on the share.
+            <p className="px-4 py-3 text-xs text-muted">
+              “Danube” = DLD developer names containing “danube”{summary.danube.developerNames.length ? `: ${summary.danube.developerNames.join("; ")}` : " (none in this selection)"}. Verify these names before relying on the share.
             </p>
-          </Card>
+          </Panel>
 
           <div className="grid gap-4 xl:grid-cols-2">
-            <Card title="Most active DLD project names" subtitle="By registered transaction count in the selection">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className={th}>Project (as reported by DLD)</th>
-                      <th className={th}>Developer</th>
-                      <th className={`${th} text-right`}>Transactions</th>
-                      <th className={`${th} text-right`}>Value</th>
+            <Panel title="Most active DLD project names" subtitle="By transaction count in the selection" bodyClassName="p-0">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    <th className={th}>Project (as reported by DLD)</th>
+                    <th className={th}>Developer</th>
+                    <th className={`${th} text-right`}>Transactions</th>
+                    <th className={`${th} text-right`}>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.topProjects.map((p) => (
+                    <tr key={p._id}>
+                      <td className={td}>
+                        {p.projectId ? (
+                          <Link className={link} href={`/projects/${p.projectId}`}>
+                            {p._id}
+                          </Link>
+                        ) : (
+                          p._id
+                        )}
+                      </td>
+                      <td className={`${td} text-ink-2`}>{p.developerName ?? "unattributed"}</td>
+                      <td className={tdNum}>{fmtInt(p.count)}</td>
+                      <td className={tdNum}>{fmtAEDCompact(p.value)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {summary.topProjects.map((p) => (
-                      <tr key={p._id}>
-                        <td className={td}>{p.projectId ? <Link className="text-accent hover:underline" href={`/projects/${p.projectId}`}>{p._id}</Link> : p._id}</td>
-                        <td className={`${td} text-ink-2`}>{p.developerName ?? "unattributed"}</td>
-                        <td className={tdNum}>{fmtInt(p.count)}</td>
-                        <td className={tdNum}>{fmtAEDCompact(p.value)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-            <Card title="Transactions linked to projects in this app" subtitle="Linked only by exact name or a reviewed alias">
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+            <Panel title="Transactions linked to projects here" subtitle="Exact name or reviewed alias only" bodyClassName="p-0">
               {linked.length === 0 ? (
-                <EmptyState title="No transactions linked yet">
-                  Review <Link className="text-accent underline" href="/quality?rule=unmatched_project_candidate">unmatched project names</Link> and add confirmed aliases on project pages.
-                </EmptyState>
+                <p className="p-4 text-sm text-muted">
+                  None linked yet. Review{" "}
+                  <Link className={link} href="/quality?queue=dld">
+                    unmatched DLD names
+                  </Link>{" "}
+                  and add confirmed aliases on project pages.
+                </p>
               ) : (
-                <table className="w-full text-sm">
+                <table className="w-full text-[13px]">
                   <thead>
                     <tr>
                       <th className={th}>Project</th>
@@ -216,19 +287,37 @@ async function Market({ searchParams }: { searchParams: PageProps<"/market">["se
                   <tbody>
                     {linked.map((l) => (
                       <tr key={l.projectId}>
-                        <td className={td}><Link className="text-accent hover:underline" href={`/projects/${l.projectId}`}>{l.name}</Link></td>
+                        <td className={td}>
+                          <Link className={link} href={`/projects/${l.projectId}`}>
+                            {l.name}
+                          </Link>
+                        </td>
                         <td className={tdNum}>{fmtInt(l.count)}</td>
                         <td className={tdNum}>{fmtAED(l.value)}</td>
-                        <td className={`${td} text-xs text-ink-2`}>{fmtDate(l.first)} – {fmtDate(l.last)}</td>
+                        <td className={`${td} text-xs text-ink-2`}>
+                          {fmtDate(l.first)} – {fmtDate(l.last)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
-            </Card>
+            </Panel>
           </div>
         </>
       )}
     </div>
+  );
+}
+
+function SourceCard({ title, status, tone, body, href }: { title: string; status: string; tone: "good" | "warn" | "neutral"; body: string; href: string }) {
+  return (
+    <Link href={href} className="block rounded-panel border border-line bg-surface p-4 shadow-panel transition-colors hover:border-line-strong hover:bg-surface-2">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">{title}</p>
+        <Badge tone={tone}>{status}</Badge>
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-ink-2">{body}</p>
+    </Link>
   );
 }

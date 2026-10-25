@@ -1,14 +1,18 @@
+import { FileCheck2, FileStack, FileX2, Landmark, LifeBuoy, Megaphone } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { importDldFolderAction, importExpectedPdfsAction, importIncomingPdfAction, uploadDldAction } from "@/app/actions";
+import { importDldFolderAction, importExpectedPdfsAction, importIncomingPdfAction } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
-import { Card, DataError, EmptyState, input, loadDb, Notice, PageHeader, Skeleton, StatusPill, td, tdNum, th } from "@/components/ui";
+import { DldUpload } from "@/components/dld-upload";
+import { FreshnessBadge } from "@/components/scope";
+import { Badge, DataError, EmptyState, input, link, loadDb, Notice, PageHeader, Panel, SectionHeading, Skeleton, StatusPill, td, tdNum, th } from "@/components/ui";
 import { fmtDate, fmtDateTime, fmtInt } from "@/lib/format";
 import { getEnv } from "@/lib/env";
 import { EXPECTED_PDFS, listDldCsvs, listIncomingPdfs } from "@/server/ingest/service";
 import { listDataSources, listDocuments, listRuns } from "@/server/queries/catalog";
+import { listScopeSnapshots } from "@/server/queries/analytics";
 
 export const metadata: Metadata = { title: "Sources & Imports" };
 
@@ -16,10 +20,16 @@ export default function SourcesPage() {
   return (
     <>
       <PageHeader
-        title="Data Sources & Imports"
-        description="Where every record comes from, when it was last imported, and what failed. Files stay on this computer; nothing is uploaded to external services."
+        eyebrow="Data management"
+        title="Sources & Imports"
+        description="Bring in the supplied PDFs, official DLD exports and public announcements, and see exactly what each import produced. Files stay on this computer; nothing is sent to external services."
+        actions={
+          <Link href="/sources/runs" className="text-sm text-link hover:underline">
+            Ingestion history →
+          </Link>
+        }
       />
-      <Suspense fallback={<Skeleton rows={6} />}>
+      <Suspense fallback={<Skeleton rows={3} />}>
         <Sources />
       </Suspense>
     </>
@@ -30,6 +40,7 @@ const mb = (b: number) => `${(b / 1024 / 1024).toFixed(1)} MB`;
 
 async function Sources() {
   await connection();
+  const now = new Date();
   let pdfs: Awaited<ReturnType<typeof listIncomingPdfs>>;
   let csvs: Awaited<ReturnType<typeof listDldCsvs>>;
   let maxMb: number;
@@ -39,35 +50,64 @@ async function Sources() {
   } catch (err) {
     return <DataError error={err} />;
   }
-  const r = await loadDb(async () => ({ sources: await listDataSources(), docs: await listDocuments(), runs: await listRuns(40) }));
+  const r = await loadDb(async () => {
+    const [sources, docs, runs, snapshots] = await Promise.all([listDataSources(), listDocuments(), listRuns(10), listScopeSnapshots()]);
+    return { sources, docs, runs, snapshots };
+  });
   const expected = EXPECTED_PDFS.map((e) => ({ ...e, file: pdfs.find((p) => p.name === e.filename) }));
   const otherPdfs = pdfs.filter((p) => !EXPECTED_PDFS.some((e) => e.filename === p.name));
+  const source = (key: string) => (r.ok ? r.data.sources.find((s) => s.key === key) : undefined);
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card title="1 · Supplied PDFs" subtitle="Expected in data/incoming/ — imported locally with pdf.js; scanned pages are reported (no OCR)">
-          <ul className="mb-3 space-y-1 text-sm">
-            {expected.map((e) => (
-              <li key={e.filename} className="flex flex-wrap items-center gap-2">
-                <StatusPill status={e.file ? "ok" : "failed"} />
-                <code>{e.filename}</code>
-                <span className="text-ink-2">
-                  {e.file ? `${mb(e.file.sizeBytes)}, modified ${fmtDateTime(e.file.modifiedAt)}` : `missing — place it at data/incoming/${e.filename}`}
-                </span>
-                <span className="text-xs text-muted">({e.kind === "inventory" ? "unit inventory & listed prices" : "project brochures"})</span>
-              </li>
-            ))}
+      <SectionHeading>Import</SectionHeading>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Panel
+          title={
+            <>
+              <FileStack aria-hidden className="size-4 text-brand" /> Supplied PDFs
+            </>
+          }
+          subtitle="Merge1.pdf (brochures) and Merge2.pdf (inventory) from data/incoming/"
+          bodyClassName="p-4 space-y-4"
+          footer={
+            <>
+              CLI: <code>npm run ingest -- pdf</code>. An unchanged file is skipped; a changed file becomes a new snapshot and the earlier one is kept. Pages without a text layer are reported (no OCR).
+            </>
+          }
+        >
+          <ul className="space-y-2.5">
+            {expected.map((e) => {
+              const s = source(e.sourceKey);
+              return (
+                <li key={e.filename} className="rounded-md border border-line p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 text-sm font-medium text-ink">
+                      {e.file ? <FileCheck2 aria-hidden className="size-4 text-good" /> : <FileX2 aria-hidden className="size-4 text-crit" />}
+                      {e.filename}
+                    </span>
+                    {s?.lastSuccessfulFetchAt ? <FreshnessBadge at={s.lastSuccessfulFetchAt} now={now} /> : <Badge tone="warn">Not imported</Badge>}
+                  </div>
+                  <p className="mt-1 text-xs text-ink-2">
+                    {e.kind === "inventory" ? "Unit inventory & listed prices" : "Project brochures"} ·{" "}
+                    {e.file ? `${mb(e.file.sizeBytes)}, modified ${fmtDateTime(e.file.modifiedAt)}` : `missing — place it at data/incoming/${e.filename}`}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
-          <ActionForm action={importExpectedPdfsAction} submitLabel="Import Merge1.pdf and Merge2.pdf" pendingLabel="Importing… (large PDFs can take a few minutes)" primary />
-          <p className="mt-2 text-xs text-muted">CLI: <code>npm run ingest -- pdf</code>. Re-importing an unchanged file does nothing; a changed file becomes a new snapshot and the old one is kept.</p>
+          <ActionForm action={importExpectedPdfsAction} submitLabel="Import Merge1.pdf and Merge2.pdf" pendingLabel="Importing… large PDFs can take a few minutes" primary />
           {otherPdfs.length ? (
-            <div className="mt-4 border-t border-line pt-3">
+            <div className="border-t border-line pt-3">
               <p className="mb-2 text-xs font-medium text-ink-2">Other PDFs in data/incoming</p>
               <ActionForm action={importIncomingPdfAction} submitLabel="Import selected PDF">
                 <div className="flex flex-wrap gap-2">
                   <select name="name" className={input} aria-label="PDF file">
-                    {otherPdfs.map((p) => <option key={p.name} value={p.name}>{p.name} ({mb(p.sizeBytes)})</option>)}
+                    {otherPdfs.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name} ({mb(p.sizeBytes)})
+                      </option>
+                    ))}
                   </select>
                   <select name="kind" className={input} aria-label="Document type">
                     <option value="inventory">Unit inventory / price list</option>
@@ -77,161 +117,213 @@ async function Sources() {
               </ActionForm>
             </div>
           ) : null}
-        </Card>
+        </Panel>
 
-        <Card title="2 · DLD Real Estate Data (CSV)" subtitle="Official Dubai Land Department exports, downloaded manually">
-          <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm text-ink-2">
+        <Panel
+          id="dld"
+          title={
+            <>
+              <Landmark aria-hidden className="size-4 text-brand" /> DLD Real Estate Data (CSV)
+            </>
+          }
+          subtitle="Official Dubai Land Department exports, downloaded manually"
+          bodyClassName="p-4 space-y-4"
+          footer="DLD site terms allow viewing and downloading for personal, non-commercial use. Obtain DLD permission before any commercial or published use."
+        >
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-ink-2">
             <li>
               Open the{" "}
-              <a className="text-accent underline" href="https://dubailand.gov.ae/en/open-data/real-estate-data/" target="_blank" rel="noopener noreferrer">DLD Real Estate Data page</a>.
+              <a className={link} href="https://dubailand.gov.ae/en/open-data/real-estate-data/" target="_blank" rel="noopener noreferrer">
+                DLD Real Estate Data page
+              </a>{" "}
+              (CAPTCHA — solved by you, never automated).
             </li>
-            <li><strong>Projects</strong> tab → search → <em>Download as CSV</em> (gives developer names for attribution).</li>
-            <li><strong>Transactions</strong> tab → choose dates (e.g. Sales, Residential, the areas you study) → <em>Download as CSV</em>.</li>
-            <li>Save into <code>data/incoming/dld/</code> and import, or upload below. The CAPTCHA is solved by you; this app never automates it.</li>
+            <li>
+              <strong className="text-ink">Projects</strong> tab → Download as CSV (developer names for attribution).
+            </li>
+            <li>
+              <strong className="text-ink">Transactions</strong> tab → choose dates → Download as CSV.
+            </li>
           </ol>
-          <Notice>DLD site terms allow viewing and downloading for personal, non-commercial use. Keep exports local; obtain DLD permission before any commercial or published use.</Notice>
-          <div className="mt-3 space-y-3">
-            <p className="text-sm">
-              {csvs.length ? `${csvs.length} CSV file(s) in data/incoming/dld: ${csvs.map((c) => c.name).join(", ")}` : "No CSV files in data/incoming/dld yet."}
-            </p>
+          <DldUpload maxMb={maxMb} />
+          <div className="border-t border-line pt-3">
+            <p className="mb-2 text-xs text-ink-2">{csvs.length ? `${csvs.length} CSV file(s) in data/incoming/dld: ${csvs.map((c) => c.name).join(", ")}` : "No CSV files in data/incoming/dld yet."}</p>
             <ActionForm action={importDldFolderAction} submitLabel="Import all CSVs in data/incoming/dld" pendingLabel="Importing…" />
-            <ActionForm action={uploadDldAction} submitLabel="Upload and import" pendingLabel="Uploading…">
-              <label className="text-xs text-ink-2">
-                Or upload one export (max {maxMb} MB; kept unchanged in data/incoming/dld)
-                <input type="file" name="file" accept=".csv,text/csv" required className="mt-1 block text-sm" />
-              </label>
-            </ActionForm>
-            <p className="text-xs text-muted">CLI: <code>npm run ingest -- dld</code> (folder) or <code>npm run ingest -- dld path/to/file.csv</code>.</p>
           </div>
-        </Card>
-      </div>
+        </Panel>
 
-      <Card title="3 · Public announcements" subtitle="Danube's website prohibits automated access, so announcements are recorded by hand">
-        <p className="text-sm text-ink-2">
-          Record launches, payment plans and handover announcements on the <Link className="text-accent underline" href="/timeline">Announcements</Link> page with the article URL and publication date.
-        </p>
-      </Card>
+        <Panel
+          title={
+            <>
+              <Megaphone aria-hidden className="size-4 text-brand" /> Public announcements
+            </>
+          }
+          subtitle="Recorded by hand with URL and publication date"
+          bodyClassName="p-4 space-y-3 text-sm text-ink-2"
+        >
+          <p>Danube&apos;s website Terms &amp; Conditions (§5) prohibit automated access, so there is no scraper. Read the news page or reputable coverage and record each item in your own words.</p>
+          <Link href="/timeline" className="inline-flex h-9 items-center rounded-md border border-line-strong px-3 text-sm font-medium text-ink hover:bg-surface-2">
+            Record an announcement
+          </Link>
+        </Panel>
+      </div>
 
       {!r.ok ? (
         <DataError error={r.error} />
       ) : (
         <>
-          <Card title="Source registry">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className={th}>Source</th>
-                    <th className={th}>Status</th>
-                    <th className={th}>Access method</th>
-                    <th className={th}>Last attempt</th>
-                    <th className={th}>Last success</th>
-                    <th className={th}>Latest source date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {r.data.sources.map((s) => (
-                    <tr key={s.key}>
-                      <td className={td}>
-                        <p className="font-medium">{s.name}</p>
-                        <p className="text-xs text-muted">{s.publisher}{s.url ? <> · <a className="underline" href={s.url} target="_blank" rel="noopener noreferrer">link</a></> : null}</p>
-                        <p className="mt-1 text-xs text-ink-2">{s.usageNotes}</p>
-                      </td>
-                      <td className={td}>
-                        <StatusPill status={s.status} />
-                        {s.errors.length ? <p className="mt-1 max-w-56 text-xs text-crit">{s.errors[s.errors.length - 1].message}</p> : null}
-                      </td>
-                      <td className={`${td} max-w-80 text-xs text-ink-2`}>{s.accessMethod}</td>
-                      <td className={`${td} whitespace-nowrap`}>{fmtDateTime(s.lastAttemptAt)}</td>
-                      <td className={`${td} whitespace-nowrap`}>{fmtDateTime(s.lastSuccessfulFetchAt)}</td>
-                      <td className={`${td} whitespace-nowrap`}>{s.lastPublishedDate ? fmtDate(s.lastPublishedDate) : "unknown"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <SectionHeading>Imported documents</SectionHeading>
+          {r.data.docs.length === 0 ? (
+            <EmptyState title="No documents imported yet">Import the supplied PDFs above.</EmptyState>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {r.data.docs.map((d) => {
+                const snap = r.data.snapshots.find((s) => s.sourceDocumentId === String(d._id));
+                return (
+                  <Panel
+                    key={String(d._id)}
+                    title={d.filename}
+                    subtitle={`${d.documentType.replace(/_/g, " ")} · imported ${fmtDateTime(d.importedAt)}`}
+                    actions={<StatusPill status={d.extractionStatus} />}
+                    footer={
+                      <span className="break-all font-mono">
+                        SHA-256 {d.sha256} · {d.extractionVersion ?? "—"} · {mb(d.sizeBytes)}
+                      </span>
+                    }
+                  >
+                    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {[
+                        ["Pages", d.pageCount ?? "—"],
+                        ["Lines / pages read", fmtInt(d.recordsExtracted)],
+                        ["Accepted", fmtInt(d.recordsAccepted)],
+                        ["Rejected / unplaced", fmtInt(d.recordsRejected)],
+                      ].map(([k, v]) => (
+                        <div key={String(k)}>
+                          <dt className="text-[11px] text-muted">{k}</dt>
+                          <dd className="tabular text-lg font-semibold text-ink">{v}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    {snap ? (
+                      <p className={`mt-3 text-xs ${snap.dateKnown ? "text-ink-2" : "text-warn"}`}>
+                        Snapshot date: {snap.dateKnown ? `${fmtDate(snap.snapshotDate)} (printed: “${snap.dateEvidence ?? ""}”)` : "not printed in the document — unknown"}
+                      </p>
+                    ) : null}
+                    {d.warnings.length ? (
+                      <ul className="mt-3 space-y-1 text-xs text-ink-2">
+                        {d.warnings.map((w, i) => (
+                          <li key={i} className="flex gap-1.5">
+                            <span aria-hidden className="text-warn">
+                              !
+                            </span>
+                            {w}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </Panel>
+                );
+              })}
             </div>
-          </Card>
+          )}
 
-          <Card title="Imported documents" subtitle="Identified by SHA-256; originals are never modified">
-            {r.data.docs.length === 0 ? (
-              <EmptyState title="No documents imported yet" />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className={th}>File</th>
-                      <th className={th}>Type</th>
-                      <th className={th}>SHA-256</th>
-                      <th className={`${th} text-right`}>Pages</th>
-                      <th className={th}>Extraction</th>
-                      <th className={`${th} text-right`}>Extracted</th>
-                      <th className={`${th} text-right`}>Accepted</th>
-                      <th className={`${th} text-right`}>Rejected</th>
-                      <th className={th}>Imported</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.data.docs.map((d) => (
-                      <tr key={String(d._id)}>
-                        <td className={td}>{d.filename}</td>
-                        <td className={`${td} text-ink-2`}>{d.documentType.replace(/_/g, " ")}</td>
-                        <td className={`${td} font-mono text-xs`} title={d.sha256}>{d.sha256.slice(0, 12)}…</td>
-                        <td className={tdNum}>{d.pageCount ?? "—"}</td>
-                        <td className={td}>
-                          <StatusPill status={d.extractionStatus} />
-                          <p className="text-xs text-muted">{d.extractionVersion}</p>
-                        </td>
-                        <td className={tdNum}>{fmtInt(d.recordsExtracted)}</td>
-                        <td className={tdNum}>{fmtInt(d.recordsAccepted)}</td>
-                        <td className={tdNum}>{fmtInt(d.recordsRejected)}</td>
-                        <td className={`${td} whitespace-nowrap`}>{fmtDateTime(d.importedAt)}</td>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Panel className="xl:col-span-2" title="Recent import runs" subtitle="Every attempt, with a truthful final status" bodyClassName="p-0" actions={<Link className={link} href="/sources/runs">All runs →</Link>}>
+              {r.data.runs.length === 0 ? (
+                <p className="p-4 text-sm text-muted">No imports have been run.</p>
+              ) : (
+                <div className="scroll-thin overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr>
+                        <th className={th}>Started</th>
+                        <th className={th}>Source · file</th>
+                        <th className={th}>Status</th>
+                        <th className={`${th} text-right`}>Found</th>
+                        <th className={`${th} text-right`}>New</th>
+                        <th className={`${th} text-right`}>Already stored</th>
+                        <th className={`${th} text-right`}>Rejected</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+                    </thead>
+                    <tbody>
+                      {r.data.runs.map((run) => (
+                        <tr key={String(run._id)} className="hover:bg-surface-2">
+                          <td className={`${td} whitespace-nowrap`}>
+                            <Link className={link} href={`/sources/runs/${run._id}`}>
+                              {fmtDateTime(run.startedAt)}
+                            </Link>
+                          </td>
+                          <td className={td}>
+                            {run.sourceKey}
+                            <span className="block text-xs text-muted">{run.filename ?? "—"}</span>
+                          </td>
+                          <td className={td}>
+                            <StatusPill status={run.status} />
+                            {run.errors[0] ? <span className="mt-0.5 block max-w-80 truncate text-xs text-crit">{run.errors[0]}</span> : null}
+                          </td>
+                          <td className={tdNum}>{fmtInt(run.recordsDiscovered)}</td>
+                          <td className={tdNum}>{fmtInt(run.recordsCreated)}</td>
+                          <td className={tdNum}>{fmtInt(run.recordsSkipped)}</td>
+                          <td className={tdNum}>{fmtInt(run.recordsRejected)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+            <Panel
+              title={
+                <>
+                  <LifeBuoy aria-hidden className="size-4 text-muted" /> When an import fails
+                </>
+              }
+              bodyClassName="p-4"
+            >
+              <ul className="space-y-2.5 text-xs leading-relaxed text-ink-2">
+                <li>
+                  <strong className="text-ink">File not found / empty:</strong> place the file at the stated path and run again.
+                </li>
+                <li>
+                  <strong className="text-ink">No table header recognised:</strong> the PDF layout differs from the parser vocabulary; nothing was imported. Share a sample page to extend it.
+                </li>
+                <li>
+                  <strong className="text-ink">Interrupted:</strong> the run stopped heart-beating (e.g. the server restarted). Re-run — stored rows are never duplicated.
+                </li>
+                <li>
+                  <strong className="text-ink">Another import is running:</strong> wait for it to finish; one run per source at a time.
+                </li>
+                <li>
+                  <strong className="text-ink">Rejected rows:</strong> kept for review on{" "}
+                  <Link className={link} href="/quality?queue=rejected">
+                    Data Quality
+                  </Link>
+                  ; accepted rows are unaffected.
+                </li>
+              </ul>
+            </Panel>
+          </div>
 
-          <Card title="Recent import runs" subtitle="Every attempt is recorded with a truthful final status">
-            {r.data.runs.length === 0 ? (
-              <EmptyState title="No imports have been run" />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className={th}>Started</th>
-                      <th className={th}>Source</th>
-                      <th className={th}>File</th>
-                      <th className={th}>Status</th>
-                      <th className={`${th} text-right`}>New</th>
-                      <th className={`${th} text-right`}>Already stored</th>
-                      <th className={`${th} text-right`}>Rejected</th>
-                      <th className={th}>First error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.data.runs.map((run) => (
-                      <tr key={String(run._id)}>
-                        <td className={`${td} whitespace-nowrap`}>
-                          <Link className="text-accent hover:underline" href={`/sources/runs/${run._id}`}>{fmtDateTime(run.startedAt)}</Link>
-                        </td>
-                        <td className={td}>{run.sourceKey}</td>
-                        <td className={td}>{run.filename ?? "—"}</td>
-                        <td className={td}><StatusPill status={run.status} /></td>
-                        <td className={tdNum}>{fmtInt(run.recordsCreated)}</td>
-                        <td className={tdNum}>{fmtInt(run.recordsSkipped)}</td>
-                        <td className={tdNum}>{fmtInt(run.recordsRejected)}</td>
-                        <td className={`${td} max-w-96 text-xs text-crit`}>{run.errors[0] ?? ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <SectionHeading>Source registry</SectionHeading>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {r.data.sources.map((s) => (
+              <Panel key={s.key} title={s.name} subtitle={s.publisher} actions={<StatusPill status={s.status} />} bodyClassName="p-4 space-y-2 text-xs text-ink-2">
+                <p>{s.accessMethod}</p>
+                <p className="text-muted">{s.usageNotes}</p>
+                <p className="flex flex-wrap gap-x-3 gap-y-1 text-muted">
+                  <span>Last attempt: {fmtDateTime(s.lastAttemptAt)}</span>
+                  <span>Last success: {fmtDateTime(s.lastSuccessfulFetchAt)}</span>
+                  <span>Latest source date: {s.lastPublishedDate ? fmtDate(s.lastPublishedDate) : "unknown"}</span>
+                </p>
+                {s.url ? (
+                  <a className={link} href={s.url} target="_blank" rel="noopener noreferrer">
+                    {s.url}
+                  </a>
+                ) : null}
+                {s.errors.length ? <Notice tone="crit">{s.errors[s.errors.length - 1].message}</Notice> : null}
+              </Panel>
+            ))}
+          </div>
         </>
       )}
     </div>
